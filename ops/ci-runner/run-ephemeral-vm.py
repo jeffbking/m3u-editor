@@ -49,6 +49,11 @@ try:
                          'sudo': 'ALL=(ALL) NOPASSWD:ALL', 'shell': '/bin/bash',
                          'lock_passwd': True,
                          'ssh_authorized_keys': [(root / 'operator_key.pub').read_text().strip()]}]}
+    # Mailslop's CI lints deployment shell scripts. Let cloud-init provide the
+    # distro package before registering, including with an older clean image.
+    if repo == 'mailslop':
+        config['package_update'] = True
+        config['packages'] = ['shellcheck']
     (directory / 'user-data').write_text('#cloud-config\n' + json.dumps(config) + '\n')
     (directory / 'meta-data').write_text(f'instance-id: {name}\nlocal-hostname: {name}\n')
     run(['docker', 'run', '--rm', '--entrypoint', 'cloud-localds', *mounts, image,
