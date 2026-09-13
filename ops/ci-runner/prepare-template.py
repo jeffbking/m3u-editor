@@ -69,8 +69,9 @@ try:
          '/vm/disk.qcow2', '/output/golden.qcow2'])
     (root / 'golden.qcow2').chmod(0o444)
 finally:
+    removed = False
     try:
-        subprocess.run(['docker', 'rm', '-f', container], timeout=40)
+        removed = subprocess.run(['docker', 'rm', '-f', container], timeout=40).returncode == 0
     except (OSError, subprocess.SubprocessError) as error:
         print(f'Template container cleanup failed: {error}', file=sys.stderr)
     try:
@@ -81,4 +82,7 @@ finally:
     except OSError as error:
         print(f'Template log archive failed: {error}', file=sys.stderr)
     finally:
-        shutil.rmtree(directory, ignore_errors=True)
+        if removed:
+            shutil.rmtree(directory, ignore_errors=True)
+        else:
+            print(f'Container removal unconfirmed; retaining template state: {directory}', file=sys.stderr)
