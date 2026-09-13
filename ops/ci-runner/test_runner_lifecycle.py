@@ -3,6 +3,7 @@ import json
 import pathlib
 import runpy
 import shutil
+import signal
 import subprocess
 import tempfile
 import unittest
@@ -11,6 +12,9 @@ from unittest.mock import patch
 
 
 class RunnerLifecycleTest(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(signal.signal, signal.SIGTERM, signal.getsignal(signal.SIGTERM))
+
     def test_archive_and_api_failures_do_not_skip_teardown_or_mask_job_error(self):
         self.exercise_cleanup()
 

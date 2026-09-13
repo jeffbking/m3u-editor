@@ -25,7 +25,6 @@ label = f'5900xt-{repo.lower()}-' + ('pr-ci' if repo in ['gitdock', 'tripslop'] 
 name = f'{label}-{uuid.uuid4().hex[:12]}'
 container = f'5900xt-{repo.lower()}-ci-vm'
 directory = root / 'instances' / name
-directory.mkdir(parents=True)
 image = 'local/ci-qemu:2026-09-13'
 mounts = ['-v', f'{directory}:/vm', '-v', f'{root}/golden.qcow2:/golden.img:ro']
 
@@ -52,6 +51,7 @@ if (network['Driver'] != 'bridge' or network['EnableIPv6'] or
         [entry.get('Subnet') for entry in network['IPAM']['Config']] != ['10.89.0.0/24']):
     raise SystemExit('Dedicated CI network configuration does not match firewall policy')
 
+directory.mkdir(parents=True)
 try:
     # The service is a singleton. Preserve every mounted directory, including
     # stopped containers, and reclaim only this repository's abandoned state.
@@ -128,13 +128,13 @@ finally:
         logs.mkdir(parents=True, exist_ok=True)
         with (logs / 'runner-diag.tar').open('wb') as stream:
             subprocess.run(ssh + ['tar cf - -C /home/runner/actions-runner _diag'],
-                           stdout=stream, timeout=30, preexec_fn=limit_archive)
+                           stdout=stream, timeout=30, check=True, preexec_fn=limit_archive)
     except (OSError, subprocess.SubprocessError) as error:
         print(f'Runner diagnostic archive failed: {error}', file=sys.stderr)
     try:
         with (logs / 'serial.log').open('wb') as stream:
             subprocess.run(['docker', 'logs', '--tail', '1000', container],
-                           stdout=stream, stderr=subprocess.STDOUT, timeout=15)
+                           stdout=stream, stderr=subprocess.STDOUT, timeout=15, check=True)
     except (OSError, subprocess.SubprocessError) as error:
         print(f'Diagnostic archive failed: {error}', file=sys.stderr)
     removed = False
