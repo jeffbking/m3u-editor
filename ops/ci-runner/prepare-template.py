@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Build a credential-free, flattened QEMU image from verified upstream inputs."""
+import os
 import hashlib
 import json
 import pathlib
@@ -40,11 +41,14 @@ ssh = ['ssh', '-i', str(root / 'operator_key'), '-p', '22209', '-o', 'BatchMode=
 def await_ssh():
     run(ssh + ['true'], timeout=10)
 
+container_attempted = False
+helper_options = ['--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--network', 'none']
 try:
-    run(['docker', 'run', '--pull=never', '--rm', '--entrypoint', 'cloud-localds', *mounts, image,
+    run(['docker', 'run', '--pull=never', '--rm', '--entrypoint', 'cloud-localds', *helper_options, *mounts, image,
          '/vm/seed.img', '/vm/user-data', '/vm/meta-data'])
-    run(['docker', 'run', '--pull=never', '--rm', '--entrypoint', 'qemu-img', *mounts, image,
+    run(['docker', 'run', '--pull=never', '--rm', '--entrypoint', 'qemu-img', *helper_options, *mounts, image,
          'create', '-f', 'qcow2', '-F', 'qcow2', '-b', '/base.img', '/vm/disk.qcow2', '60G'])
+    container_attempted = True  # A failed Docker CLI can still have created the container.
     run(['docker', 'run', '--pull=never', '-d', '--name', container, '--network', 'ci-vms',
          '--device', '/dev/kvm', '--group-add', str(pathlib.Path('/dev/kvm').stat().st_gid),
          '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--cpus', '2',
@@ -57,21 +61,25 @@ try:
     await_ssh()
     run(ssh + ['cloud-init status --wait'], timeout=900)
     # Reconnect after provisioning grants the Docker group.
-    run(ssh + ['docker info && test ! -e /home/runner/actions-runner/.runner'])
+    run(ssh + ['docker info && test ! -e /home/runner/actions-runner/.runner'], timeout=120)
     with archive.open('rb') as stream:
-        run(ssh + ['tar xzf - -C /home/runner/actions-runner'], stdin=stream)
-    run(ssh + ['sudo cloud-init clean --logs --machine-id && sudo rm -f /etc/ssh/ssh_host_* && sudo sync && sudo poweroff'])
+        run(ssh + ['tar xzf - -C /home/runner/actions-runner'], stdin=stream, timeout=300)
+    run(ssh + ['sudo cloud-init clean --logs --machine-id && sudo rm -f /etc/ssh/ssh_host_* && sudo sync && sudo poweroff'], timeout=120)
     status = subprocess.check_output(['docker', 'wait', container], text=True, timeout=90).strip()
     if status != '0':
         raise SystemExit(f'Template did not shut down cleanly: {status}')
-    run(['docker', 'run', '--pull=never', '--rm', '--entrypoint', 'qemu-img', *mounts,
-         '-v', f'{root}:/output', image, 'convert', '-f', 'qcow2', '-O', 'qcow2',
-         '/vm/disk.qcow2', '/output/golden.qcow2'])
-    (root / 'golden.qcow2').chmod(0o444)
+    run(['docker', 'run', '--pull=never', '--rm', '--entrypoint', 'qemu-img', *helper_options, *mounts,
+         image, 'convert', '-f', 'qcow2', '-O', 'qcow2',
+         '/vm/disk.qcow2', '/vm/golden.qcow2'])
+    candidate = directory / 'golden.qcow2'
+    candidate.chmod(0o444)
+    # Same-filesystem hard link publishes a complete image without replacing an existing one.
+    os.link(candidate, root / 'golden.qcow2')
 finally:
     removed = False
     try:
-        removed = subprocess.run(['docker', 'rm', '-f', container], timeout=40).returncode == 0
+        removed = (not container_attempted or
+                   subprocess.run(['docker', 'rm', '-f', container], timeout=40).returncode == 0)
     except (OSError, subprocess.SubprocessError) as error:
         print(f'Template container cleanup failed: {error}', file=sys.stderr)
     try:
@@ -85,4 +93,4 @@ finally:
         if removed:
             shutil.rmtree(directory, ignore_errors=True)
         else:
-            print(f'Container removal unconfirmed; retaining template state: {directory}', file=sys.stderr)
+            print(f'Container removal unconfirmed; retaining template state: {directory}. Remove {container} with docker rm -f, then delete this directory', file=sys.stderr)
