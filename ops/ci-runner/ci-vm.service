@@ -1,0 +1,19 @@
+[Unit]
+Description=Disposable CI VM for m3u-editor on 5900xt
+After=ci-runner-firewall.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+ExecStart=%h/actions-runners/ci-vms/.venv/bin/python %h/actions-runners/ci-vms/run-ephemeral-vm.py m3u-editor 22207 2048
+ExecStopPost=-/usr/bin/docker rm -f 5900xt-m3u-editor-ci-vm
+Restart=always
+RestartSec=15
+KillMode=mixed
+TimeoutStopSec=180
+
+[Install]
+WantedBy=default.target

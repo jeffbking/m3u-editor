@@ -1,0 +1,36 @@
+name: Runner preflight
+on:
+  push:
+    branches: [main, ci/all-actions-5900xt]
+    paths:
+      - .github/workflows/**
+      - ops/ci-runner/**
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  ci-runner:
+    runs-on: [self-hosted, Linux, X64, 5900xt-m3u-editor-ci]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+      - name: Verify runner identity and tools
+        shell: bash
+        run: |
+          [[ "$RUNNER_NAME" == "5900xt-m3u-editor-ci-"* ]]
+          python3 -c 'import json; assert json.load(open("/home/runner/actions-runner/.runner", encoding="utf-8-sig"))["ephemeral"] is True'
+          test ! -e "$HOME/.preflight-job-seen"
+          touch "$HOME/.preflight-job-seen"
+          test "$(id -u)" != 0
+          node --version
+          npm --version
+          git --version
+          gh --version
+          jq --version
+          docker info --format '{{.ServerVersion}}'
+          docker compose version
