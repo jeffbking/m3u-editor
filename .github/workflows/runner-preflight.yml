@@ -19,7 +19,7 @@ jobs:
       - name: Verify runner identity and tools
         shell: bash
         run: |
-          test "$RUNNER_NAME" = "5900xt-m3u-editor-ci"
+          [[ "$RUNNER_NAME" == "5900xt-m3u-editor-ci-"* ]]
           test "$(id -u)" != 0
           node --version
           npm --version
