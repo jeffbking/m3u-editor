@@ -4,6 +4,7 @@ import hashlib
 import json
 import pathlib
 import subprocess
+import sys
 import uuid
 import shutil
 from tenacity import retry, retry_if_exception_type, stop_after_delay, wait_fixed
@@ -68,9 +69,16 @@ try:
          '/vm/disk.qcow2', '/output/golden.qcow2'])
     (root / 'golden.qcow2').chmod(0o444)
 finally:
-    subprocess.run(['docker', 'rm', '-f', container])
-    logs = root / 'logs' / container
-    logs.mkdir(parents=True, exist_ok=True)
-    if (directory / 'serial.log').exists():
-        shutil.copyfile(directory / 'serial.log', logs / 'serial.log')
-    shutil.rmtree(directory)
+    try:
+        subprocess.run(['docker', 'rm', '-f', container], timeout=40)
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f'Template container cleanup failed: {error}', file=sys.stderr)
+    try:
+        logs = root / 'logs' / container
+        logs.mkdir(parents=True, exist_ok=True)
+        if (directory / 'serial.log').exists():
+            shutil.copyfile(directory / 'serial.log', logs / 'serial.log')
+    except OSError as error:
+        print(f'Template log archive failed: {error}', file=sys.stderr)
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)

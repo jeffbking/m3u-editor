@@ -18,6 +18,9 @@ class RunnerLifecycleTest(unittest.TestCase):
             script = root / source.name
             shutil.copyfile(source, script)
             (root / 'operator_key.pub').write_text('ssh-ed25519 test-only-key\n')
+            stale = root / 'instances' / '5900xt-tripslop-pr-ci-abandoned'
+            stale.mkdir(parents=True)
+            (stale / 'disk.qcow2').write_text('old overlay')
             calls = []
             job_failed = False
             original_open = pathlib.Path.open
@@ -32,6 +35,10 @@ class RunnerLifecycleTest(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0)
 
             def output(args, **kwargs):
+                if args[:3] == ['docker', 'network', 'inspect']:
+                    return json.dumps([{'Driver':'bridge','EnableIPv6':False,'IPAM':{'Config':[{'Subnet':'10.89.0.0/24'}]}}])
+                if args[:3] == ['docker', 'ps', '-aq']:
+                    return ''
                 if args[-1].endswith('registration-token'):
                     return json.dumps({'token': 'test-registration-token'})
                 if job_failed:
@@ -56,6 +63,7 @@ class RunnerLifecycleTest(unittest.TestCase):
                 with self.assertRaises(subprocess.CalledProcessError) as failure:
                     runpy.run_path(str(script))
             self.assertEqual(failure.exception.returncode, 42)
+            self.assertIn(['docker', 'logs', '--tail', '1000', '5900xt-tripslop-ci-vm'], calls)
             self.assertIn(['docker', 'stop', '--timeout', '30', '5900xt-tripslop-ci-vm'], calls)
             self.assertIn(['docker', 'rm', '-f', '5900xt-tripslop-ci-vm'], calls)
             self.assertEqual(list((root / 'instances').iterdir()), [])
