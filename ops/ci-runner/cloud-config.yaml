@@ -1,0 +1,51 @@
+#cloud-config
+{
+  "hostname": "5900xt-m3u-editor-ci-vm",
+  "ssh_pwauth": false,
+  "disable_root": true,
+  "users":
+    [
+      {
+        "name": "runner",
+        "uid": 1000,
+        "groups": ["sudo"],
+        "sudo": "ALL=(ALL) NOPASSWD:ALL",
+        "shell": "/bin/bash",
+        "lock_passwd": true,
+        "ssh_authorized_keys": [],
+      },
+    ],
+  "package_update": true,
+  "packages":
+    [
+      "docker.io",
+      "docker-compose-v2",
+      "git",
+      "curl",
+      "unzip",
+      "zip",
+      "jq",
+      "build-essential",
+      "python3",
+      "python3-venv",
+      "ca-certificates",
+      "gh",
+      "zsh",
+      "postgresql-client",
+      "libicu74",
+      "acl",
+    ],
+  "runcmd":
+    [
+      ["usermod", "-aG", "docker", "runner"],
+      ["systemctl", "enable", "--now", "docker"],
+      ["mkdir", "-p", "/opt/hostedtoolcache", "/home/runner/actions-runner"],
+      [
+        "chown",
+        "-R",
+        "runner:runner",
+        "/opt/hostedtoolcache",
+        "/home/runner/actions-runner",
+      ],
+    ],
+}

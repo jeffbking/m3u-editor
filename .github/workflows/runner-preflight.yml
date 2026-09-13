@@ -1,0 +1,30 @@
+name: Runner preflight
+on:
+  push:
+    branches: [main, ci/all-actions-5900xt]
+    paths:
+      - .github/workflows/**
+      - ops/ci-runner/**
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ci-runner:
+    runs-on: [self-hosted, Linux, X64, 5900xt-m3u-editor-ci]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+      - name: Verify runner identity and tools
+        shell: bash
+        run: |
+          test "$RUNNER_NAME" = "5900xt-m3u-editor-ci"
+          test "$(id -u)" != 0
+          node --version
+          npm --version
+          git --version
+          gh --version
+          jq --version
+          docker info --format '{{.ServerVersion}}'
+          docker compose version

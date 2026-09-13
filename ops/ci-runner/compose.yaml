@@ -1,0 +1,47 @@
+services:
+  runner-vm:
+    build: .
+    image: local/ci-qemu:2026-09-13
+    container_name: 5900xt-m3u-editor-ci-vm
+    restart: unless-stopped
+    cpus: 2
+    mem_limit: 3840m
+    memswap_limit: 3840m
+    pids_limit: 128
+    devices: [/dev/kvm]
+    group_add: ["${KVM_GID:?Set the numeric group ID of /dev/kvm}"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    ports: ["127.0.0.1:22207:2222"]
+    networks: [ci-vms]
+    volumes:
+      - "${CI_VM_DIRECTORY:?Set the repository VM directory}:/vm"
+      - "${CI_VM_BASE_IMAGE:?Set the verified Ubuntu image path}:/base.img:ro"
+    command:
+      - -enable-kvm
+      - -cpu
+      - host
+      - -smp
+      - "2"
+      - -m
+      - "3072"
+      - -display
+      - none
+      - -device
+      - virtio-balloon-pci,free-page-reporting=on
+      - -serial
+      - file:/vm/serial.log
+      - -qmp
+      - unix:/vm/qmp.sock,server=on,wait=off
+      - -drive
+      - file=/vm/disk.qcow2,if=virtio,format=qcow2
+      - -drive
+      - file=/vm/seed.img,if=virtio,format=raw,readonly=on
+      - -netdev
+      - user,id=net0,hostfwd=tcp::2222-:22
+      - -device
+      - virtio-net-pci,netdev=net0
+networks:
+  ci-vms:
+    external: true
+    name: ci-vms
