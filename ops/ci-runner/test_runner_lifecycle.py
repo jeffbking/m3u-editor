@@ -31,6 +31,9 @@ class RunnerLifecycleTest(unittest.TestCase):
             stale = root / 'instances' / '5900xt-tripslop-pr-ci-abandoned'
             stale.mkdir(parents=True)
             (stale / 'disk.qcow2').write_text('old overlay')
+            protected = root / 'instances' / '5900xt-tripslop-pr-ci-inuse'
+            protected.mkdir()
+            (protected / 'disk.qcow2').write_text('mounted overlay')
             calls = []
             job_failed = False
             original_open = pathlib.Path.open
@@ -50,7 +53,9 @@ class RunnerLifecycleTest(unittest.TestCase):
                 if args[:3] == ['docker', 'network', 'inspect']:
                     return json.dumps([{'Driver':'bridge','EnableIPv6':False,'IPAM':{'Config':[{'Subnet':'10.89.0.0/24'}]}}])
                 if args[:3] == ['docker', 'ps', '-aq']:
-                    return ''
+                    return 'fixture-container\n'
+                if args[:2] == ['docker', 'inspect']:
+                    return json.dumps([{'Source': str(protected), 'Destination': '/vm'}]) + '\n'
                 if args[-1].endswith('registration-token'):
                     return json.dumps({'token': 'test-registration-token'})
                 if job_failed:
@@ -80,7 +85,8 @@ class RunnerLifecycleTest(unittest.TestCase):
             self.assertIn(['docker', 'stop', '--timeout', '30', '5900xt-tripslop-ci-vm'], calls)
             self.assertIn(['docker', 'rm', '-f', '5900xt-tripslop-ci-vm'], calls)
             remaining = list((root / 'instances').iterdir())
-            self.assertEqual(len(remaining), 1 if removal_fails else 0)
+            self.assertEqual(len(remaining), 2 if removal_fails else 1)
+            self.assertEqual((protected / 'disk.qcow2').read_text(), 'mounted overlay')
             self.assertFalse(stale.exists())
             registration = next(c[-1] for c in calls if c[0] == 'ssh' and '--labels' in c[-1])
             self.assertIn('--labels 5900xt-tripslop-pr-ci ', registration)
