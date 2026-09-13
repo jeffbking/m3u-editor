@@ -41,11 +41,11 @@ def await_ssh():
     run(ssh + ['true'], timeout=10)
 
 try:
-    run(['docker', 'run', '--rm', '--entrypoint', 'cloud-localds', *mounts, image,
+    run(['docker', 'run', '--pull=never', '--rm', '--entrypoint', 'cloud-localds', *mounts, image,
          '/vm/seed.img', '/vm/user-data', '/vm/meta-data'])
-    run(['docker', 'run', '--rm', '--entrypoint', 'qemu-img', *mounts, image,
+    run(['docker', 'run', '--pull=never', '--rm', '--entrypoint', 'qemu-img', *mounts, image,
          'create', '-f', 'qcow2', '-F', 'qcow2', '-b', '/base.img', '/vm/disk.qcow2', '60G'])
-    run(['docker', 'run', '-d', '--name', container, '--network', 'ci-vms',
+    run(['docker', 'run', '--pull=never', '-d', '--name', container, '--network', 'ci-vms',
          '--device', '/dev/kvm', '--group-add', str(pathlib.Path('/dev/kvm').stat().st_gid),
          '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--cpus', '2',
          '--memory', '2816m', '--pids-limit', '128', '-p', '127.0.0.1:22209:2222',
@@ -64,7 +64,7 @@ try:
     status = subprocess.check_output(['docker', 'wait', container], text=True, timeout=90).strip()
     if status != '0':
         raise SystemExit(f'Template did not shut down cleanly: {status}')
-    run(['docker', 'run', '--rm', '--entrypoint', 'qemu-img', *mounts,
+    run(['docker', 'run', '--pull=never', '--rm', '--entrypoint', 'qemu-img', *mounts,
          '-v', f'{root}:/output', image, 'convert', '-f', 'qcow2', '-O', 'qcow2',
          '/vm/disk.qcow2', '/output/golden.qcow2'])
     (root / 'golden.qcow2').chmod(0o444)
