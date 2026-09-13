@@ -47,7 +47,7 @@ host-specific integration. Keep credentials and disk images outside git.
 
 ```bash
 install -d -m 700 "$HOME/actions-runners/ci-vms"
-install -m 600 run-ephemeral-vm.py prepare-template.py requirements.txt cloud-config.json "$HOME/actions-runners/ci-vms/"
+install -m 600 run-ephemeral-vm.py prepare-template.py test_runner_lifecycle.py requirements.txt cloud-config.json "$HOME/actions-runners/ci-vms/"
 docker build -t local/ci-qemu:2026-09-13 .
 cd "$HOME/actions-runners/ci-vms"
 python3 -m venv .venv
@@ -108,9 +108,16 @@ image unintentionally. Do not modify a golden image while runners use it.
 Ensure `loginctl show-user "$USER" -p Linger` reports yes for reboot startup.
 `systemctl --user status <unit>` and `journalctl --user -u <unit> -n 50` expose
 registration failures; `gh api repos/jeffbking/m3u-editor/actions/runners --paginate`
-checks online registrations. Restarts use systemd backoff, not a marker-file poll.
+checks online registrations. Restarts use systemd restart delay, not a marker-file poll.
 Archive directories are private to the operator; apply the supplied tmpfiles
 policy to retain seven days of diagnostics. This host has finite capacity: watch
 available RAM and memory pressure when changing concurrency or per-job limits.
 
 GitHub contract: <https://docs.github.com/en/actions/reference/runners/self-hosted-runners#ephemeral-runners-for-autoscaling>.
+
+VM serial output uses Docker’s local log driver with three 10 MiB rotated files;
+the last 1,000 lines are archived before teardown. Diagnostic archive failures
+do not prevent guest/disk cleanup. The launcher normalizes repository names
+before choosing labels. Run `.venv/bin/python test_runner_lifecycle.py` to verify
+teardown when SSH, log archiving and GitHub cleanup fail together.
+The QEMU tools image runs as UID 1000, matching the 5900xt operator account.

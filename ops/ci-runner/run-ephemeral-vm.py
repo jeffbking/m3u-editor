@@ -16,6 +16,7 @@ if len(sys.argv) != 4:
 repo, port_text, memory_text = sys.argv[1:4]
 if not re.fullmatch(r'[A-Za-z0-9_.-]+', repo) or repo in {'.', '..'}:
     raise SystemExit('Invalid repository')
+repo = repo.lower()
 port, memory = int(port_text), int(memory_text)
 if not (1024 <= port <= 65535 and 1024 <= memory <= 8192):
     raise SystemExit('Port or memory outside supported range')
@@ -72,6 +73,7 @@ try:
     run(['docker', 'run', '--rm', '--entrypoint', 'qemu-img', *mounts, image,
          'create', '-f', 'qcow2', '-F', 'qcow2', '-b', '/golden.img', '/vm/disk.qcow2', '60G'])
     run(['docker', 'run', '-d', '--name', container, '--network', 'ci-vms',
+         '--log-driver', 'local', '--log-opt', 'max-size=10m', '--log-opt', 'max-file=3',
          '--sysctl', 'net.ipv6.conf.all.disable_ipv6=1',
          '--device', '/dev/kvm', '--group-add', str(pathlib.Path('/dev/kvm').stat().st_gid),
          '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--cpus', '2',
@@ -79,7 +81,7 @@ try:
          '-p', f'127.0.0.1:{port}:2222', *mounts, image,
          '-enable-kvm', '-cpu', 'host', '-smp', '2', '-m', str(memory), '-display', 'none',
          '-device', 'virtio-balloon-pci,free-page-reporting=on',
-         '-serial', 'file:/vm/serial.log',
+         '-serial', 'stdio', '-monitor', 'none',
          '-drive', 'file=/vm/disk.qcow2,if=virtio,format=qcow2',
          '-drive', 'file=/vm/seed.img,if=virtio,format=raw,readonly=on',
          '-netdev', 'user,id=net0,ipv6=off,hostfwd=tcp::2222-:22', '-device', 'virtio-net-pci,netdev=net0'])
@@ -97,21 +99,30 @@ finally:
     # The SSH stream contains only a short-lived registration token. No host
     # credentials, Docker socket, or host directory is exposed to the guest.
     logs = root / 'logs' / name
-    logs.mkdir(parents=True, exist_ok=True)
     try:
+        logs.mkdir(parents=True, exist_ok=True)
         with (logs / 'runner-diag.tar').open('wb') as stream:
             subprocess.run(ssh + ['tar cf - -C /home/runner/actions-runner _diag'],
                            stdout=stream, timeout=30)
-    except subprocess.TimeoutExpired:
-        pass
+        with (logs / 'serial.log').open('wb') as stream:
+            subprocess.run(['docker', 'logs', '--tail', '1000', container],
+                           stdout=stream, stderr=subprocess.STDOUT, timeout=15)
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f'Diagnostic archive failed: {error}', file=sys.stderr)
     subprocess.run(['docker', 'stop', '--timeout', '30', container], stdout=subprocess.DEVNULL)
     subprocess.run(['docker', 'rm', '-f', container], stdout=subprocess.DEVNULL)
-    if (directory / 'serial.log').exists():
-        shutil.copyfile(directory / 'serial.log', logs / 'serial.log')
-    shutil.rmtree(directory)
-    runners = json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp',
-                         f'repos/jeffbking/{repo}/actions/runners'], text=True))
-    runners = [runner for page in runners for runner in page['runners']]
-    for runner in runners:
-        if runner['name'] == name:
-            run(['gh', 'api', '-X', 'DELETE', f'repos/jeffbking/{repo}/actions/runners/{runner["id"]}'])
+    try:
+        shutil.rmtree(directory)
+    except OSError as error:
+        print(f'Instance directory cleanup failed: {error}', file=sys.stderr)
+    try:
+        runners = json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp',
+                             f'repos/jeffbking/{repo}/actions/runners'], text=True))
+        for page in runners:
+            for runner in page['runners']:
+                if runner['name'] == name:
+                    run(['gh', 'api', '-X', 'DELETE', f'repos/jeffbking/{repo}/actions/runners/{runner["id"]}'])
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        # Startup retries cleanup of offline owned names after API recovery.
+        # Do not mask the original job/SSH failure with a cleanup exception.
+        print(f'Registration cleanup failed: {error}', file=sys.stderr)
