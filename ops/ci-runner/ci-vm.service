@@ -1,7 +1,6 @@
 [Unit]
 Description=Disposable CI VM for m3u-editor on 5900xt
 After=default.target ci-runner-firewall.service
-Requires=ci-runner-firewall.service
 StartLimitIntervalSec=0
 
 [Service]

@@ -47,7 +47,7 @@ host-specific integration. Keep credentials and disk images outside git.
 
 ```bash
 install -d -m 700 "$HOME/actions-runners/ci-vms"
-install -m 600 run-ephemeral-vm.py prepare-template.py requirements.txt cloud-config.yaml "$HOME/actions-runners/ci-vms/"
+install -m 600 run-ephemeral-vm.py prepare-template.py requirements.txt cloud-config.json "$HOME/actions-runners/ci-vms/"
 docker build -t local/ci-qemu:2026-09-13 .
 cd "$HOME/actions-runners/ci-vms"
 python3 -m venv .venv

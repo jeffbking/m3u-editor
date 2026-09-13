@@ -11,10 +11,14 @@ import uuid
 from tenacity import retry, retry_if_exception_type, stop_after_delay, wait_fixed
 
 root = pathlib.Path(__file__).resolve().parent
+if len(sys.argv) != 4:
+    raise SystemExit('Usage: run-ephemeral-vm.py REPOSITORY PORT MEMORY_MIB')
 repo, port_text, memory_text = sys.argv[1:4]
-if not re.fullmatch(r'[A-Za-z0-9_.-]+', repo):
+if not re.fullmatch(r'[A-Za-z0-9_.-]+', repo) or repo in {'.', '..'}:
     raise SystemExit('Invalid repository')
 port, memory = int(port_text), int(memory_text)
+if not (1024 <= port <= 65535 and 1024 <= memory <= 8192):
+    raise SystemExit('Port or memory outside supported range')
 label = f'5900xt-{repo.lower()}-' + ('pr-ci' if repo in ['gitdock', 'tripslop'] else 'ci')
 name = f'{label}-{uuid.uuid4().hex[:12]}'
 container = f'5900xt-{repo.lower()}-ci-vm'
@@ -44,6 +48,13 @@ try:
     run(['docker', 'run', '--rm', '--network', 'host', '--cap-drop', 'ALL',
          '--cap-add', 'NET_ADMIN', '--security-opt', 'no-new-privileges',
          'local/ci-runner-firewall:2026-09-13'])
+    pages = json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp',
+                       f'repos/jeffbking/{repo}/actions/runners'], text=True))
+    for page in pages:
+        for old in page['runners']:
+            if old['name'].startswith(label + '-') and old['status'] == 'offline' and not old['busy']:
+                run(['gh', 'api', '-X', 'DELETE',
+                     f'repos/jeffbking/{repo}/actions/runners/{old["id"]}'])
     config = {'hostname': name, 'ssh_pwauth': False, 'disable_root': True,
               'users': [{'name': 'runner', 'uid': 1000, 'groups': ['sudo', 'docker'],
                          'sudo': 'ALL=(ALL) NOPASSWD:ALL', 'shell': '/bin/bash',
@@ -61,6 +72,7 @@ try:
     run(['docker', 'run', '--rm', '--entrypoint', 'qemu-img', *mounts, image,
          'create', '-f', 'qcow2', '-F', 'qcow2', '-b', '/golden.img', '/vm/disk.qcow2', '60G'])
     run(['docker', 'run', '-d', '--name', container, '--network', 'ci-vms',
+         '--sysctl', 'net.ipv6.conf.all.disable_ipv6=1',
          '--device', '/dev/kvm', '--group-add', str(pathlib.Path('/dev/kvm').stat().st_gid),
          '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--cpus', '2',
          '--memory', f'{memory+768}m', '--memory-swap', f'{memory+768}m', '--pids-limit', '128',
@@ -70,7 +82,7 @@ try:
          '-serial', 'file:/vm/serial.log',
          '-drive', 'file=/vm/disk.qcow2,if=virtio,format=qcow2',
          '-drive', 'file=/vm/seed.img,if=virtio,format=raw,readonly=on',
-         '-netdev', 'user,id=net0,hostfwd=tcp::2222-:22', '-device', 'virtio-net-pci,netdev=net0'])
+         '-netdev', 'user,id=net0,ipv6=off,hostfwd=tcp::2222-:22', '-device', 'virtio-net-pci,netdev=net0'])
     await_ssh()
     run(ssh + ['cloud-init status --wait && test ! -e /home/runner/actions-runner/.runner'], timeout=240)
     token = json.loads(subprocess.check_output(['gh', 'api', '-X', 'POST',

@@ -5,6 +5,7 @@ import json
 import pathlib
 import subprocess
 import uuid
+import shutil
 from tenacity import retry, retry_if_exception_type, stop_after_delay, wait_fixed
 
 root = pathlib.Path(__file__).resolve().parent
@@ -21,7 +22,7 @@ if (root / 'golden.qcow2').exists():
 directory = root / ('template-build-' + uuid.uuid4().hex[:12])
 directory.mkdir()
 container = directory.name
-config = json.loads((root / 'cloud-config.yaml').read_text().split('\n', 1)[1])
+config = json.loads((root / 'cloud-config.json').read_text())
 config['hostname'] = container
 config['users'][0]['ssh_authorized_keys'] = [(root / 'operator_key.pub').read_text().strip()]
 (directory / 'user-data').write_text('#cloud-config\n' + json.dumps(config) + '\n')
@@ -51,14 +52,14 @@ try:
          '-display', 'none', '-serial', 'file:/vm/serial.log',
          '-drive', 'file=/vm/disk.qcow2,if=virtio,format=qcow2',
          '-drive', 'file=/vm/seed.img,if=virtio,format=raw,readonly=on',
-         '-netdev', 'user,id=net0,hostfwd=tcp::2222-:22', '-device', 'virtio-net-pci,netdev=net0'])
+         '-netdev', 'user,id=net0,ipv6=off,hostfwd=tcp::2222-:22', '-device', 'virtio-net-pci,netdev=net0'])
     await_ssh()
     run(ssh + ['cloud-init status --wait'], timeout=900)
     # Reconnect after provisioning grants the Docker group.
     run(ssh + ['docker info && test ! -e /home/runner/actions-runner/.runner'])
     with archive.open('rb') as stream:
-        run(ssh + ['tar xz -C /home/runner/actions-runner'], stdin=stream)
-    run(ssh + ['sudo cloud-init clean --logs --machine-id && sudo sync && sudo poweroff'])
+        run(ssh + ['tar xzf - -C /home/runner/actions-runner'], stdin=stream)
+    run(ssh + ['sudo cloud-init clean --logs --machine-id && sudo rm -f /etc/ssh/ssh_host_* && sudo sync && sudo poweroff'])
     status = subprocess.check_output(['docker', 'wait', container], text=True, timeout=90).strip()
     if status != '0':
         raise SystemExit(f'Template did not shut down cleanly: {status}')
@@ -68,3 +69,8 @@ try:
     (root / 'golden.qcow2').chmod(0o444)
 finally:
     subprocess.run(['docker', 'rm', '-f', container])
+    logs = root / 'logs' / container
+    logs.mkdir(parents=True, exist_ok=True)
+    if (directory / 'serial.log').exists():
+        shutil.copyfile(directory / 'serial.log', logs / 'serial.log')
+    shutil.rmtree(directory)
