@@ -56,6 +56,7 @@ class RunnerLifecycleTest(unittest.TestCase):
                 return original_open(path, *args, **kwargs)
 
             with patch('sys.argv', [str(script), 'Tripslop', '22204', '3072']), \
+                 patch('shutil.disk_usage', return_value=SimpleNamespace(free=100 * 1024**3)), \
                  patch('subprocess.run', side_effect=command), \
                  patch('subprocess.check_output', side_effect=output), \
                  patch.object(pathlib.Path, 'open', open_file), \
