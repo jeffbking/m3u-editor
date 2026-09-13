@@ -12,6 +12,12 @@ from unittest.mock import patch
 
 class RunnerLifecycleTest(unittest.TestCase):
     def test_archive_and_api_failures_do_not_skip_teardown_or_mask_job_error(self):
+        self.exercise_cleanup()
+
+    def test_failed_removal_preserves_instance_for_recovery(self):
+        self.exercise_cleanup(removal_fails=True)
+
+    def exercise_cleanup(self, removal_fails=False):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             source = pathlib.Path(__file__).with_name('run-ephemeral-vm.py')
@@ -29,6 +35,8 @@ class RunnerLifecycleTest(unittest.TestCase):
             def command(args, **kwargs):
                 nonlocal job_failed
                 calls.append(args)
+                if removal_fails and args[:2] == ['docker', 'rm']:
+                    raise subprocess.TimeoutExpired(args, 40)
                 if args[0] == 'ssh' and 'input' in kwargs:
                     job_failed = True
                     raise subprocess.CalledProcessError(42, args)
@@ -67,7 +75,9 @@ class RunnerLifecycleTest(unittest.TestCase):
             self.assertIn(['docker', 'logs', '--tail', '1000', '5900xt-tripslop-ci-vm'], calls)
             self.assertIn(['docker', 'stop', '--timeout', '30', '5900xt-tripslop-ci-vm'], calls)
             self.assertIn(['docker', 'rm', '-f', '5900xt-tripslop-ci-vm'], calls)
-            self.assertEqual(list((root / 'instances').iterdir()), [])
+            remaining = list((root / 'instances').iterdir())
+            self.assertEqual(len(remaining), 1 if removal_fails else 0)
+            self.assertFalse(stale.exists())
             registration = next(c[-1] for c in calls if c[0] == 'ssh' and '--labels' in c[-1])
             self.assertIn('--labels 5900xt-tripslop-pr-ci ', registration)
 

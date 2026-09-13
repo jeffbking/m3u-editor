@@ -137,23 +137,29 @@ finally:
                            stdout=stream, stderr=subprocess.STDOUT, timeout=15)
     except (OSError, subprocess.SubprocessError) as error:
         print(f'Diagnostic archive failed: {error}', file=sys.stderr)
+    removed = False
     for command in [['docker', 'stop', '--timeout', '30', container], ['docker', 'rm', '-f', container]]:
         try:
-            subprocess.run(command, stdout=subprocess.DEVNULL, timeout=40)
+            result = subprocess.run(command, stdout=subprocess.DEVNULL, timeout=40)
+            if command[1] == 'rm':
+                removed = result.returncode == 0
         except (OSError, subprocess.SubprocessError) as error:
             print(f'Container cleanup failed: {error}', file=sys.stderr)
-    try:
-        shutil.rmtree(directory)
-    except OSError as error:
-        print(f'Instance directory cleanup failed: {error}', file=sys.stderr)
-    try:
-        runners = json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp',
-                             f'repos/jeffbking/{repo}/actions/runners'], text=True, timeout=60))
-        for page in runners:
-            for runner in page['runners']:
-                if runner['name'] == name:
-                    run(['gh', 'api', '-X', 'DELETE', f'repos/jeffbking/{repo}/actions/runners/{runner["id"]}'])
-    except (OSError, subprocess.SubprocessError, ValueError) as error:
-        # Startup retries cleanup of offline owned names after API recovery.
-        # Do not mask the original job/SSH failure with a cleanup exception.
-        print(f'Registration cleanup failed: {error}', file=sys.stderr)
+    if not removed:
+        print('Container removal unconfirmed; retaining disk and registration for recovery', file=sys.stderr)
+    else:
+        try:
+            shutil.rmtree(directory)
+        except OSError as error:
+            print(f'Instance directory cleanup failed: {error}', file=sys.stderr)
+        try:
+            runners = json.loads(subprocess.check_output(['gh', 'api', '--paginate', '--slurp',
+                                 f'repos/jeffbking/{repo}/actions/runners'], text=True, timeout=60))
+            for page in runners:
+                for runner in page['runners']:
+                    if runner['name'] == name:
+                        run(['gh', 'api', '-X', 'DELETE', f'repos/jeffbking/{repo}/actions/runners/{runner["id"]}'])
+        except (OSError, subprocess.SubprocessError, ValueError) as error:
+            # Startup retries cleanup of offline owned names after API recovery.
+            # Do not mask the original job/SSH failure with a cleanup exception.
+            print(f'Registration cleanup failed: {error}', file=sys.stderr)
