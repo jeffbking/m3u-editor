@@ -121,3 +121,5 @@ do not prevent guest/disk cleanup. The launcher normalizes repository names
 before choosing labels. Run `.venv/bin/python test_runner_lifecycle.py` to verify
 teardown when SSH, log archiving and GitHub cleanup fail together.
 The QEMU tools image runs as UID 1000, matching the 5900xt operator account.
+
+Guest Docker uses its native registry-mirror setting with Google's public `mirror.gcr.io` cache. This preserves canonical image names and digest verification while reducing Docker Hub anonymous pulls from the shared host IP. Cache misses still use Docker Hub, so authenticated access may be needed for uncached images. Cloud-init reloads only the guest daemon before registration. The pgvector digest used by Mailslop was successfully pulled through this configuration on a disposable guest. See https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images.

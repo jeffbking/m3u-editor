@@ -80,6 +80,11 @@ try:
                          'sudo': 'ALL=(ALL) NOPASSWD:ALL', 'shell': '/bin/bash',
                          'lock_passwd': True,
                          'ssh_authorized_keys': [(root / 'operator_key.pub').read_text().strip()]}]}
+    # Use Docker's supported public Hub cache without changing image names or
+    # digests. Cache misses retain Docker's normal upstream fallback.
+    config['write_files'] = [{'path': '/etc/docker/daemon.json', 'permissions': '0644',
+                              'content': json.dumps({'registry-mirrors': ['https://mirror.gcr.io']})}]
+    config['runcmd'] = [['systemctl', 'reload', 'docker']]
     # Mailslop's CI lints deployment shell scripts. Let cloud-init provide the
     # distro package before registering, including with an older clean image.
     if repo == 'mailslop':
