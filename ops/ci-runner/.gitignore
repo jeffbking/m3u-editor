@@ -1,0 +1,10 @@
+operator_key
+operator_key.pub
+*.qcow2
+*.img
+*.tar.gz
+instances/
+logs/
+template-build-*/
+__pycache__/
+.venv/
