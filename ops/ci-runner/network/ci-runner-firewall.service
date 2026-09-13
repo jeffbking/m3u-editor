@@ -1,0 +1,10 @@
+[Unit]
+Description=Private-network isolation for dedicated 5900xt CI networks
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker run --rm --network host --cap-drop ALL --cap-add NET_ADMIN --security-opt no-new-privileges local/ci-runner-firewall:2026-09-13
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

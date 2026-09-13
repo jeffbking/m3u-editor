@@ -1,48 +1,116 @@
-# Isolated CI on 5900xt
+# Disposable CI VMs on 5900xt
 
-Migrated jobs select `5900xt-m3u-editor-ci`, registered only inside this repository's
-Ubuntu 24.04 KVM guest on 5900xt. The guest has its own Docker daemon, loopback,
-filesystem, and service containers. Fixed PostgreSQL ports and `--network host`
-refer to the guest, not production. Existing deployment runners remain separate.
+Jobs select `5900xt-m3u-editor-ci`. Each job boots a fresh Ubuntu 24.04 KVM guest from the
+read-only `golden.qcow2`, registers with `--ephemeral`, then discards its writable
+disk. PR jobs and later privileged jobs cannot inherit filesystem changes.
+Docker runs inside the guest: service ports, privileged build containers and
+`--network host` refer to that guest. Production deployment runners are separate.
+The non-root QEMU process has only /dev/kvm, dropped capabilities, 2 CPUs,
+2048 MiB guest RAM and 2816 MiB outer memory limit. Only guest SSH is forwarded,
+on host loopback port 22207. No host filesystem or Docker socket reaches the guest.
 
-## Provisioning
+## CI network policy
 
-Use standard QEMU and cloud-init; no custom virtualization or Docker daemon is
-implemented. The Dockerfile packages Ubuntu's maintained QEMU/cloud-image-utils.
-Compose starts a pre-provisioned disk and enforces resource limits. The QEMU
-process is non-root, with only `/dev/kvm`, all capabilities dropped, no host
-Docker socket, and no filesystem share exposed to the guest.
+Before enabling a runner, build and install the shared network policy from this directory:
 
-1. Download `noble-server-cloudimg-amd64.img` from
-   <https://cloud-images.ubuntu.com/noble/20260911/> and verify SHA256
-   `612b2c0cc1bc413a6cb8c38fd611794caf0f2b436c50013d8b3794db12ad7354`.
-2. Copy `cloud-config.yaml` to the private VM directory as `user-data`, add the
-   operator's SSH public key to `ssh_authorized_keys`, and write `meta-data`
-   containing a unique `instance-id` and `local-hostname`. Never copy the private
-   key into the image. Build this Dockerfile, then use `cloud-localds` to create
-   `seed.img` and `qemu-img create -f qcow2 -F qcow2 -b /base.img disk.qcow2 60G`
-   with the base image mounted at `/base.img`. Both tools are in the image.
-3. Create the external `ci-vms` Docker network with an unused subnet outside
-   guest Docker's address pools (5900xt uses `10.89.0.0/24`). Do not use the host's
-   default `172.17.0.0/16` bridge: guest Docker would route forwarded SSH replies
-   to its own bridge instead of QEMU's gateway.
-4. Set `CI_VM_DIRECTORY`, `CI_VM_BASE_IMAGE`, and `KVM_GID` (numeric group from
-   `stat -c %g /dev/kvm`), then run `docker compose up -d --build`.
-5. SSH to `runner@127.0.0.1` on port `22207` using the operator key. Wait for
-   `cloud-init status --wait` to finish, then reconnect so newly granted Docker
-   group membership applies. Verify `docker info` and `docker compose version`.
-6. Install the official Actions runner in `/home/runner/actions-runner` inside
-   the guest. Initial version: 2.337.0, Linux x64 SHA256
-   `70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613`.
-   Register using a short-lived repository registration token passed through
-   SSH stdin: `./config.sh --unattended --url https://github.com/jeffbking/m3u-editor
---token "$registration_token" --name 5900xt-m3u-editor-ci --labels 5900xt-m3u-editor-ci --work _work`.
-   Then run `sudo ./svc.sh install runner` and `sudo ./svc.sh start` in that
-   directory. Confirm the runner is online with the exact custom label.
+```bash
+docker network inspect ci-containers >/dev/null 2>&1 || docker network create --subnet 10.90.0.0/24 -o com.docker.network.bridge.enable_icc=false ci-containers
+docker network inspect ci-vms >/dev/null 2>&1 || docker network create --subnet 10.89.0.0/24 ci-vms
+docker build -t local/ci-runner-firewall:2026-09-13 network
+install -Dm644 network/ci-runner-firewall.service "$HOME/.config/systemd/user/ci-runner-firewall.service"
+systemctl --user daemon-reload
+systemctl --user enable --now ci-runner-firewall.service
+```
 
-The operator key and registration state stay outside git. Do not clone a disk
-that contains runner credentials. Automatic runner updates remain enabled;
-apply Ubuntu guest updates and refresh pinned base images during maintenance.
-The guest is persistent, not recreated for each job. Only this repository's
-jobs use it. SSH is published on host loopback only. Monitor available host
-memory when adding runners; the per-VM limit is not a fleet-wide quota.
+Both networks are IPv4-only. The host-side helper has NET_ADMIN solely to install
+idempotent rules in Docker's DOCKER-USER and host INPUT chains. Only traffic from
+10.89.0.0/24 and 10.90.0.0/24 enters these rules. New connections to host services,
+private/LAN/tailnet/link-local addresses and other CI guests are rejected; replies
+to operator-initiated SSH remain allowed. Public internet access is permitted.
+The launcher reapplies the rules before each new job environment, including after
+Docker restarts. Job containers never get NET_ADMIN or the helper's host network.
+Do not attach other workloads to these reserved networks or enable IPv6 without
+an equivalent IPv6 policy. Existing host firewall rules are never flushed.
+
+Verified on 5900xt: GitHub HTTPS succeeds; host gateway SSH and LAN HTTP probes
+increment the dedicated REJECT counters. This is network isolation, not an
+internet destination allowlist. Docker containers still share the host kernel.
+
+## Build a clean image
+
+Use the authenticated host operator account. Standard QEMU/cloud-init implement
+virtualization and guest provisioning. Tenacity 9.1.4 (Apache-2.0, Python >=3.10,
+29 kB wheel, no runtime dependencies) supplies bounded SSH readiness retries;
+OpenSSH ConnectionAttempts does not retry an accepted connection's early handshake
+reset. See <https://tenacity.readthedocs.io/en/stable/>. The launcher contains only
+host-specific integration. Keep credentials and disk images outside git.
+
+```bash
+install -d -m 700 "$HOME/actions-runners/ci-vms"
+install -m 600 run-ephemeral-vm.py prepare-template.py requirements.txt cloud-config.yaml "$HOME/actions-runners/ci-vms/"
+docker build -t local/ci-qemu:2026-09-13 .
+cd "$HOME/actions-runners/ci-vms"
+python3 -m venv .venv
+.venv/bin/pip install --require-hashes -r requirements.txt
+# Generate once, only if this operator key does not already exist:
+test -e operator_key || ssh-keygen -t ed25519 -N '' -f operator_key
+curl -fLO https://cloud-images.ubuntu.com/noble/20260911/noble-server-cloudimg-amd64.img
+curl -fLO https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-linux-x64-2.337.0.tar.gz
+.venv/bin/python prepare-template.py
+```
+
+The preparation script verifies both SHA256 hashes before booting a template on
+port 22209. It installs OS dependencies and the official runner without registering
+it, clears cloud-init state/machine-id, shuts down cleanly, and flattens the image.
+It refuses to overwrite an existing golden image. The operator public key enters
+the guest; the private key stays on the host. For image refresh, build in a separate
+directory and switch only after all runner units are stopped while idle.
+The host needs Python venv/pip support; on 5900xt the pure-Python Tenacity wheel was
+installed into the venv using the existing Ubuntu tooling container's pip.
+
+## Enable this runner
+
+Back in this checked-in directory:
+
+```bash
+install -Dm644 ci-vm.service "$HOME/.config/systemd/user/ci-vm-m3u-editor.service"
+install -Dm644 logs.conf "$HOME/.config/user-tmpfiles.d/ci-runner-logs.conf"
+systemctl --user daemon-reload
+systemctl --user enable --now ci-vm-m3u-editor.service
+systemctl --user enable --now systemd-tmpfiles-clean.timer
+```
+
+The supervisor uses unique instance IDs and per-instance SSH known-host files for
+the newly created local guest. It archives diagnostics under
+`~/actions-runners/ci-vms/logs/<name>` and deletes the per-job disk. Guest disks are
+60 GiB virtual size; host disk capacity and log retention still require monitoring.
+The outer Docker subnet must differ from guest Docker's default 172.17/16, or SSH
+responses may route into the guest's Docker bridge.
+
+## Maintenance and verification
+
+Stop or replace a runner only after its GitHub registration reports `busy: false`.
+A fresh unique runner name is expected after each job, with a short offline gap.
+The Runner preflight checks tools and identity without checkout or application
+secrets. The host `gh` credential is never copied into a job environment. Only a
+short-lived registration token crosses stdin; `config.sh` briefly receives that
+token in its guest/container argv and writes credentials inside the disposable
+environment. Never run `gh auth login` inside a job environment.
+
+`--disableupdate` prevents updates from being discarded and downloaded again on
+every job. Refresh the official runner image/archive at least every 30 days, and
+sooner for mandatory/security updates, then rebuild before GitHub stops accepting
+jobs. OS packages follow Ubuntu security updates at build time; these builds are
+not bit-for-bit reproducible. Record `docker image inspect <image> --format
+'{{.Id}}'` with maintenance records. Rebuild explicitly rather than reusing an old
+image unintentionally. Do not modify a golden image while runners use it.
+
+Ensure `loginctl show-user "$USER" -p Linger` reports yes for reboot startup.
+`systemctl --user status <unit>` and `journalctl --user -u <unit> -n 50` expose
+registration failures; `gh api repos/jeffbking/m3u-editor/actions/runners --paginate`
+checks online registrations. Restarts use systemd backoff, not a marker-file poll.
+Archive directories are private to the operator; apply the supplied tmpfiles
+policy to retain seven days of diagnostics. This host has finite capacity: watch
+available RAM and memory pressure when changing concurrency or per-job limits.
+
+GitHub contract: <https://docs.github.com/en/actions/reference/runners/self-hosted-runners#ephemeral-runners-for-autoscaling>.

@@ -1,6 +1,6 @@
 #cloud-config
 {
-  "hostname": "5900xt-m3u-editor-ci-vm",
+  "hostname": "5900xt-newslop-ci-vm",
   "ssh_pwauth": false,
   "disable_root": true,
   "users":

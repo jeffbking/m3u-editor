@@ -6,6 +6,9 @@ on:
       - .github/workflows/**
       - ops/ci-runner/**
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -20,6 +23,9 @@ jobs:
         shell: bash
         run: |
           [[ "$RUNNER_NAME" == "5900xt-m3u-editor-ci-"* ]]
+          python3 -c 'import json; assert json.load(open("/home/runner/actions-runner/.runner", encoding="utf-8-sig"))["ephemeral"] is True'
+          test ! -e "$HOME/.preflight-job-seen"
+          touch "$HOME/.preflight-job-seen"
           test "$(id -u)" != 0
           node --version
           npm --version
